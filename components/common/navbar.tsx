@@ -68,7 +68,8 @@ export default function Navbar() {
   // Navigation items - only dashboard and home
   const navItems = [
     { href: '/', label: 'Home' },
-    { href: '/dashboard', label: 'Dashboard' }
+    { href: '/dashboard', label: 'Dashboard' },
+    { href: '/adhd', label: 'Adhd' },
   ];
 
   return (

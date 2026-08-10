@@ -104,6 +104,30 @@ model Files {
   class             Classroom @relation(fields: [classId], references: [id], onDelete: Cascade)
 }
 
+model AdhdMaterial {
+  id        String      @id @default(cuid())
+  fileName  String
+  status    Status      @default(processing) 
+  createdAt DateTime    @default(now())
+  
+  slides    AdhdSlide[]
+}
+
+model AdhdSlide {
+  id              String       @id @default(cuid())
+  materialId      String
+  material        AdhdMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  
+  imageUrl        String?     
+  textContent     String       
+  order           Float        
+  
+  isClarification Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+
+  @@index([materialId])
+}
+
 enum Role {
   student
   teacher

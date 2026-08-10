@@ -4,22 +4,22 @@ import { getServerSession } from 'next-auth';
 import { NextResponse } from 'next/server';
 
 export async function GET(req: Request) {
+    const baseUrl = process.env.NEXTAUTH_URL || "https://34.100.218.126.nip.io";
     try {
         const url = new URL(req.url);
         const id = url.searchParams.get('id');
-        
         if (!id) {
-            return NextResponse.redirect('https://lumina-950190429451.asia-south1.run.app/dashboard');
+            return NextResponse.redirect(new URL('/dashboard', baseUrl));
         }
 
         const session = await getServerSession(authOptions);
         
         if (!session) {
-            return NextResponse.redirect('https://lumina-950190429451.asia-south1.run.app/auth/signin');
+            return NextResponse.redirect(new URL('/auth/signin', baseUrl));
         }
         
         if (session.user.role !== 'student') {
-            return NextResponse.redirect('https://lumina-950190429451.asia-south1.run.app/dashboard');
+            return NextResponse.redirect(new URL('/dashboard', baseUrl));
         }
 
         const classRoom = await prisma.classroom.findUnique({
@@ -28,13 +28,13 @@ export async function GET(req: Request) {
         });
 
         if (!classRoom) {
-            return NextResponse.redirect('https://lumina-950190429451.asia-south1.run.app/classroom/create');
+            return NextResponse.redirect(new URL('/classroom/create', baseUrl));
         }
 
         const isAlreadyEnrolled = classRoom.students.some((student) => student.id === session.user.id);
         
         if (isAlreadyEnrolled) {
-            return NextResponse.redirect(`https://lumina-950190429451.asia-south1.run.app/classroom/${classRoom.id}`);
+            return NextResponse.redirect(new URL(`/classroom/${classRoom.id}`, baseUrl));
         }
 
         const updatedClassRoom = await prisma.classroom.update({
@@ -46,10 +46,10 @@ export async function GET(req: Request) {
             }
         });
 
-        return NextResponse.redirect(`https://lumina-950190429451.asia-south1.run.app/classroom/${updatedClassRoom.id}`);
+        return NextResponse.redirect(new URL(`/classroom/${updatedClassRoom.id}`, baseUrl));
 
     } catch (error) {
         console.log('Join classroom error:', error);
-        return NextResponse.redirect('https://lumina-950190429451.asia-south1.run.app/dashboard?error=join_failed');
+        return NextResponse.redirect(new URL('/dashboard?error=join_failed', baseUrl));
     }
 }

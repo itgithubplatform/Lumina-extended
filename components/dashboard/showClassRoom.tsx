@@ -1,13 +1,14 @@
 "use client";
 import React, { useState } from 'react';
-import { motion } from "framer-motion";
-import { BookOpen, X, FileText, Upload, Users, Share, Check } from 'lucide-react';
+import { AnimatePresence, motion } from "framer-motion";
+import { BookOpen, X, FileText, Upload, Users, Share, Check, UserPlus } from 'lucide-react';
 import FileUpload from './fileUpload';
 import { Status } from '@prisma/client';
 import Link from 'next/link';
 import { useRouter } from 'nextjs-toploader/app';
 import { useSession } from 'next-auth/react';
 import Loader from '../ui/loader';
+import StudentManager from './studentManager';
 
 
 export interface classroom {
@@ -35,6 +36,7 @@ export default function ShowClassRoom({ classroomData }: { classroomData: classr
   const [classroom, setClassroom] = React.useState<classroom>(classroomData);
   const [isCopied, setIsCopied] = useState(false);
   const { data: session, status } = useSession();
+  const [showStudentManager, setShowStudentManager] = useState(false); // Modal state
 
   React.useEffect(() => {
     const interval = setInterval(async () => {
@@ -88,92 +90,89 @@ export default function ShowClassRoom({ classroomData }: { classroomData: classr
   return (
     <div className="p-4 md:p-8 mt-14 max-w-6xl mx-auto min-h-screen">
       {/* Header Section */}
-      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-12 mt-8" >
+      <>
+      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-12 mt-8">
         <div className="relative bg-gradient-to-br from-blue-50 via-white to-purple-50 rounded-3xl border border-gray-200/80 p-8 md:p-12 shadow-sm overflow-hidden">
+          
           {/* Background decorative elements */}
-          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-200/20 rounded-full -translate-y-16 translate-x-16">
-          </div>
-          <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-200/20 rounded-full translate-y-12 -translate-x-12">
-          </div>
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-200/20 rounded-full -translate-y-16 translate-x-16"></div>
+          <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-200/20 rounded-full translate-y-12 -translate-x-12"></div>
+          
           <div className="relative z-10">
             <div className="flex flex-col lg:flex-row items-start justify-between gap-8">
+              
               {/* Left Content */}
               <div className="flex-1">
                 <div className="flex items-center gap-4 mb-6">
-                  <motion.div whileHover={{ scale: 1.05, rotate: 5 }} className="bg-gradient-to-br from-blue-500 to-purple-600 p-4 rounded-2xl shadow-lg" >
+                  <motion.div whileHover={{ scale: 1.05, rotate: 5 }} className="bg-gradient-to-br from-blue-500 to-purple-600 p-4 rounded-2xl shadow-lg">
                     <BookOpen className="text-white" size={32} />
                   </motion.div>
                   <div>
-<div className='flex items-center gap-2'>
-                      <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent mb-2"> {classroom.name}
-                    </h1>
-                    <button title='Copy Link'
-                      onClick={handleCopyClick}
-                      disabled={isCopied} // Optional: disable button briefly after click
-                      className="text-gray-500 flex items-center p-2 rounded-md transition-colors duration-200 hover:bg-gray-100"
-                    >
-                      {isCopied ? (
-                        <Check size={20} className="text-green-500" />
-                      ) : (
-                        <Share size={20} className="text-blue-500" />
-                      )}
-                    </button>
-
-  </div>                 
-     <p className="text-lg text-gray-600 flex items-center gap-2">
-
+                    <div className='flex items-center gap-2'>
+                      <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent mb-2"> 
+                        {classroom.name}
+                      </h1>
+                      <button 
+                        title='Copy Link'
+                        onClick={handleCopyClick}
+                        disabled={isCopied}
+                        className="text-gray-500 flex items-center p-2 rounded-md transition-colors duration-200 hover:bg-gray-100"
+                      >
+                        {isCopied ? <Check size={20} className="text-green-500" /> : <Share size={20} className="text-blue-500" />}
+                      </button>
+                    </div>                 
+                    <p className="text-lg text-gray-600 flex items-center gap-2">
                       <FileText size={20} className="text-blue-500" />
                       {classroom.subject}
                     </p>
                   </div>
                 </div>
+
                 {/* Stats Cards */}
                 <div className="flex flex-wrap gap-4 mb-6">
-                  <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="flex items-center gap-3 bg-white/80 backdrop-blur-sm px-5 py-4 rounded-xl border border-gray-200/80 shadow-sm" >
+                  <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="flex items-center gap-3 bg-white/80 backdrop-blur-sm px-5 py-4 rounded-xl border border-gray-200/80 shadow-sm">
                     <div className="bg-green-100 p-3 rounded-lg">
                       <Users className="text-green-600" size={24} />
                     </div>
                     <div>
-                      <p className="font-bold text-gray-800 text-lg">
-                        {classroom._count.students}
-
-                      </p>
+                      <p className="font-bold text-gray-800 text-lg">{classroom._count.students}</p>
                       <p className="text-sm text-gray-500">Students Enrolled</p>
                     </div>
                   </motion.div>
-                  <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }} className="flex items-center gap-3 bg-white/80 backdrop-blur-sm px-5 py-4 rounded-xl border border-gray-200/80 shadow-sm" >
+                  <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }} className="flex items-center gap-3 bg-white/80 backdrop-blur-sm px-5 py-4 rounded-xl border border-gray-200/80 shadow-sm">
                     <div className="bg-blue-100 p-3 rounded-lg">
                       <FileText className="text-blue-600" size={24} />
                     </div>
                     <div>
-                      <p className="font-bold text-gray-800 text-lg">{classroom.files.length}
-                      </p>
-                      <p className="text-sm text-gray-500">Total Files
-                      </p>
+                      <p className="font-bold text-gray-800 text-lg">{classroom.files.length}</p>
+                      <p className="text-sm text-gray-500">Total Files</p>
                     </div>
                   </motion.div>
                 </div>
-                {/* Quick Actions */}
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="flex flex-wrap gap-3" >
-                  {
-                    session?.user.role === "teacher" && <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 hover:shadow-lg flex items-center gap-2">
-                      <Users size={18} /> Manage Students
+
+                {/* Quick Actions - Changed to a Button */}
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="flex flex-wrap items-center gap-3">
+                  {session?.user.role === "teacher" && (
+                    <button 
+                      onClick={() => setShowStudentManager(true)}
+                      className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-indigo-600 hover:to-blue-600 text-white font-semibold rounded-xl shadow-md transition-all transform hover:scale-[1.02]"
+                    >
+                      <UserPlus size={20} />
+                      Manage Students
                     </button>
-                  }
+                  )}
                 </motion.div>
               </div>
+
               {/* Right Visual Element */}
-              <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 }} className="lg:w-48 flex-shrink-0" >
+              <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 }} className="lg:w-48 flex-shrink-0">
                 <div className="bg-gradient-to-br from-blue-500/10 to-purple-600/10 rounded-2xl p-6 border border-blue-200/50">
                   <div className="text-center">
                     <div className="bg-white rounded-2xl p-4 shadow-sm mb-4">
                       <BookOpen className="text-blue-600 mx-auto" size={32} />
                     </div>
-                    <p className="text-sm text-gray-600 font-medium">Active Classroom
-
-                    </p>
-                    <div className="w-12 h-1 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full mx-auto mt-2">
-                    </div>
+                    <p className="text-sm text-gray-600 font-medium">Active Classroom</p>
+                    <div className="w-12 h-1 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full mx-auto mt-2"></div>
                   </div>
                 </div>
               </motion.div>
@@ -181,6 +180,27 @@ export default function ShowClassRoom({ classroomData }: { classroomData: classr
           </div>
         </div>
       </motion.div>
+
+      {/* The Modal Overlay */}
+      <AnimatePresence>
+        {showStudentManager && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm"
+            onClick={() => setShowStudentManager(false)} // 1. Closes when clicking the blur
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()} // 2. Stops clicks inside the modal from closing it
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <StudentManager classId={classroom.id} onClose={() => setShowStudentManager(false)} />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
       {/* File Upload Section - Placed after student count */}
       {
         session?.user.role === "teacher" &&
@@ -219,7 +239,7 @@ export default function ShowClassRoom({ classroomData }: { classroomData: classr
         </div>
 
         {classroom.files.length > 0 ? (
-          <motion.div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3" layout>
+          <motion.div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 cursor-default" layout>
             {classroom.files.map((file, index) => (
               file.status === "completed" ? (
                 <div key={file.id} onClick={e => {

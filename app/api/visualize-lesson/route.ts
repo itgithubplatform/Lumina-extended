@@ -41,7 +41,6 @@ function generateFileName(sceneIndex: number): string {
   return `scene-${sceneIndex}-${timestamp}-${random}.png`;
 }
 
-// Improved image generation with retry logic
 async function generateImageWithRetry(
   imageModel: any, 
   prompt: string, 
@@ -54,13 +53,28 @@ async function generateImageWithRetry(
       console.log(`Generating image attempt ${attempt} for prompt: ${prompt.substring(0, 50)}...`);
       
       const image = await imageModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        contents: [{ role: "user", parts: [{ text: `Generate an image for this prompt. Return ONLY the image, no conversational text Prompt:${prompt}` }] }],
       });
 
-      const base64Img = image.response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      // Safely extract the part
+      const part = image.response?.candidates?.[0]?.content?.parts?.[0];
+      
+      if (!part) {
+        throw new Error("No content parts returned from API");
+      }
+
+      // Check where the base64 data actually lives in the new Gemini Image response
+      // It might be under inlineData, or it might be returned as a specialized image object
+      let base64Img = part.inlineData?.data;
+      
+      // Fallback check: if the SDK wraps it differently (e.g., part.fileData or a raw buffer)
+      if (!base64Img && (part as any).executableCode) {
+         throw new Error("Model returned code instead of an image.");
+      }
 
       if (!base64Img) {
-        throw new Error("No image data returned from API");
+        console.error("Full response part structure:", JSON.stringify(part, null, 2));
+        throw new Error("Image generated, but base64 data could not be found in the expected 'inlineData' field.");
       }
 
       return `data:image/png;base64,${base64Img}`;
@@ -69,9 +83,8 @@ async function generateImageWithRetry(
       lastError = error as Error;
       console.warn(`Image generation attempt ${attempt} failed:`, error);
       
-      // Exponential backoff: wait longer between retries
       if (attempt < maxRetries) {
-        const backoffTime = Math.min(1000 * Math.pow(2, attempt), 10000); // Max 10 seconds
+        const backoffTime = Math.min(1000 * Math.pow(2, attempt), 10000);
         console.log(`Waiting ${backoffTime}ms before retry...`);
         await new Promise(resolve => setTimeout(resolve, backoffTime));
       }
