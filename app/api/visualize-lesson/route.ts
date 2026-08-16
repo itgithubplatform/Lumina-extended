@@ -509,12 +509,13 @@ export const runtime = "nodejs";
 // Helper function to upload base64 image to Google Cloud Storage
 async function uploadBase64Image(base64Data: string, fileName: string): Promise<string> {
   const storage = new Storage({
-    projectId: process.env.GOOGLE_PROJECT_ID,
+    projectId: process.env.GOOGLE_PROJECT_ID || process.env.VERTEX_PROJECT_ID,
     keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS || "./vertex-key.json",
   });
   
   const bucketName = process.env.GOOGLE_CLOUD_STORAGE_BUCKET || 'lumina-lesson-images';
   const bucket = storage.bucket(bucketName);
+  
   try {
     const base64Image = base64Data.replace(/^data:image\/\w+;base64,/, '');
     const buffer = Buffer.from(base64Image, 'base64');
@@ -547,31 +548,33 @@ async function generateImageWithRetry(
   prompt: string, 
   maxRetries: number = 3
 ): Promise<string> {
-  let lastError: Error;
+  let lastError: Error = new Error("Unknown image generation error");
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const image = await imageModel.generateContent({
+      const response = await imageModel.generateContent({
         contents: [{ role: "user", parts: [{ text: `Create a clean, vibrant educational vector illustration for this concept: ${prompt}` }] }],
       });
 
-      const candidate = image.response?.candidates?.[0];
+      // Safely extract candidate parts across different client response formats
+      const candidate = response.response?.candidates?.[0];
       const part = candidate?.content?.parts?.[0];
       
       if (!part) {
         throw new Error("No content parts returned from Image API");
       }
 
-      let base64Img = part.inlineData?.data || (part as any).fileData?.data;
+      // Check inline data format
+      const base64Img = (part as any).inlineData?.data || (part as any).fileData?.data;
 
       if (!base64Img) {
-        throw new Error("Base64 data could not be found in response.");
+        throw new Error("Base64 data could not be found in response part.");
       }
 
       return `data:image/png;base64,${base64Img}`;
     } catch (error) {
       lastError = error as Error;
-      console.warn(`Image generation attempt ${attempt} failed:`, error);
+      console.warn(`Image generation attempt ${attempt} failed:`, (error as Error).message);
       if (attempt < maxRetries) {
         const backoffTime = Math.min(1000 * Math.pow(2, attempt), 10000);
         await new Promise(resolve => setTimeout(resolve, backoffTime));
@@ -579,7 +582,7 @@ async function generateImageWithRetry(
     }
   }
   
-  throw lastError!;
+  throw lastError;
 }
 
 export async function POST(req: Request) {
@@ -587,7 +590,6 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { imagePrompt, text } = body;
 
-    // Use the exact custom imagePrompt generated from the PDF content
     const promptToVisualize = imagePrompt || text;
 
     if (!promptToVisualize) {
@@ -595,10 +597,11 @@ export async function POST(req: Request) {
     }
 
     const vertexAI = new VertexAI({
-      project: process.env.GOOGLE_PROJECT_ID, 
+      project: process.env.GOOGLE_PROJECT_ID || process.env.VERTEX_PROJECT_ID, 
       location: process.env.LOCATION || "us-central1",
     });
 
+    // gemini-2.5-flash-image handles native multimodal/image generation workflows
     const imageModel = vertexAI.getGenerativeModel({ 
       model: "gemini-2.5-flash-image",
       generationConfig: { maxOutputTokens: 1024, temperature: 0.6 },
@@ -624,6 +627,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ 
       error: "Failed to generate image visualization",
       details: (err as Error).message,
+      // Fallback fallback URL so your UI doesn't break if quota hits or keys fail
       imageUrl: "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1000&q=80"
     }, { status: 500 });
   }

@@ -7,6 +7,9 @@ import mammoth from "mammoth";
 
 export const runtime = "nodejs";
 
+// Helper function to throttle requests and avoid 429 Rate Limits
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -19,7 +22,7 @@ export async function POST(req: Request) {
     const originalFilename = (file as any).name || "uploaded-file";
     const ext = path.extname(originalFilename).toLowerCase();
 
-    // 1. Create initial material state in database
+    // 1. Create initial material state in database with "processing" status
     const material = await prisma.adhdMaterial.create({
       data: {
         fileName: originalFilename,
@@ -35,30 +38,35 @@ export async function POST(req: Request) {
     // 2. Background processing following your exact sequential pipeline
     setTimeout(async () => {
       try {
-        // Step A: Extract ALL useful text/content from PDF or DOCX
+        // Step A: Extract text based on file format (.docx vs .pdf)
         let extractedText = "";
+        
         if (ext === ".docx") {
           const docxResult = await mammoth.extractRawText({ buffer });
           extractedText = docxResult.value || "";
         } else {
+          // PDF Processing block
           const pdfParse = require("pdf-parse");
           try {
             const pdfData = await pdfParse(buffer);
             extractedText = pdfData.text || "";
           } catch (pdfErr) {
+            console.warn("Standard PDF parsing failed, trying text-decoder fallback...");
             extractedText = buffer.toString("utf-8");
           }
         }
 
-        // Step B: Clean + structure the extracted content
+        // Step B: Clean + structure the extracted content to remove garbage/unwanted spaces
         extractedText = extractedText
           .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
           .replace(/[\r\n]+/g, " ")
           .replace(/\s+/g, " ")
           .trim();
 
+        // Fallback if scanned/empty PDF lacks native text streams (OCR placeholder integration check)
         if (!extractedText || extractedText.length < 30) {
-          extractedText = `Detailed academic study material for the topic: "${originalFilename}".`;
+          console.warn("Extracted text is minimal or empty (possibly a scanned image PDF). Applying structural fallback context.");
+          extractedText = `Detailed academic study material document for: "${originalFilename}".`;
         }
 
         const googleAi = GoogleAi.getInstance();
@@ -100,31 +108,49 @@ ${extractedText.substring(0, 25000)}
         const parsedPlan = JSON.parse(cleanedPlan.substring(jsonStart, jsonEnd));
         const stops = parsedPlan.stops || [];
 
-        // Steps D & E: Generate Slide 1 -> Slide 2 -> ... -> Slide 6 sequentially based on the shared context
+        // Steps D & E: Generate Slide 1 -> Slide 2 -> ... -> Slide 6 sequentially with rate-limit protection
         for (let i = 0; i < stops.length; i++) {
           const stop = stops[i];
           const slideNumber = i + 1;
 
           console.log(`Generating Slide ${slideNumber} of 6 based on shared chapter context...`);
 
-          // Generate unique visual image for each slide using Vertex AI
-          let imageUrl = "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1000&q=80";
-          try {
-            imageUrl = await googleAi.generateImage(
-              `Slide ${slideNumber} Key Idea: ${stop.keyIdea}. Visual concept: ${stop.imagePrompt}`
-            );
-          } catch (imgErr) {
-            console.error(`Image generation fallback used for Slide ${slideNumber}:`, imgErr);
+          // Pause 3 seconds between slide image calls to completely avoid Vertex AI 429 Quota limits
+          if (i > 0) {
+            await sleep(3000);
           }
 
-          // Save each slide ensuring every slide features its specific key idea prominently in the text payload
+          let imageUrl = "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1000&q=80";
+          let attempts = 0;
+          let success = false;
+
+          // Retry loop specifically for handling rate-limit hiccups
+          while (attempts < 3 && !success) {
+            try {
+              imageUrl = await googleAi.generateImage(
+                `Slide ${slideNumber} Key Idea: ${stop.keyIdea}. Visual concept: ${stop.imagePrompt}`
+              );
+              success = true;
+            } catch (imgErr: any) {
+              attempts++;
+              console.warn(`Attempt ${attempts} failed for Slide ${slideNumber} image generation:`, imgErr?.message);
+              if (attempts < 3) {
+                // Exponential backoff wait before retrying
+                await sleep(4000 * attempts);
+              } else {
+                console.error(`Image generation fallback used permanently for Slide ${slideNumber}`);
+              }
+            }
+          }
+
+          // Save each slide ensuring every slide features its specific key idea prominently into the database storage layer
           await prisma.adhdSlide.create({
             data: {
               materialId: material.id,
               textContent: JSON.stringify({
                 title: stop.title,
                 descriptionNormal: stop.descriptionNormal,
-                keyIdea: stop.keyIdea, // Key idea explicitly attached per slide
+                keyIdea: stop.keyIdea,
               }),
               imageUrl: typeof imageUrl === 'string' && imageUrl.startsWith('http') ? imageUrl : null,
               order: slideNumber * 1.0,
