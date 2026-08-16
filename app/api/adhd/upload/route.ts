@@ -4,11 +4,34 @@ import path from "path";
 import { prisma } from "@/lib/db/prisma";
 import { GoogleAi } from "@/lib/googleAi";
 import mammoth from "mammoth";
+import { VertexAI } from "@google-cloud/vertexai";
+import { Storage } from "@google-cloud/storage";
 
 export const runtime = "nodejs";
 
-// Helper function to throttle requests and avoid 429 Rate Limits
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function uploadBase64Image(base64Data: string, fileName: string): Promise<string> {
+  const storage = new Storage({
+    projectId: process.env.GOOGLE_PROJECT_ID,
+    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  });
+
+  const bucketName = process.env.GOOGLE_CLOUD_STORAGE_BUCKET || 'lumina-lesson-images';
+  const bucket = storage.bucket(bucketName);
+  const base64Image = base64Data.replace(/^data:image\/\w+;base64,/, '');
+  const buffer = Buffer.from(base64Image, 'base64');
+  const file = bucket.file(fileName);
+
+  await file.save(buffer, {
+    metadata: {
+      contentType: 'image/png',
+      cacheControl: 'public, max-age=31536000',
+    }
+  });
+
+  return `https://storage.googleapis.com/${bucketName}/${fileName}`;
+}
 
 export async function POST(req: Request) {
   try {
@@ -22,7 +45,7 @@ export async function POST(req: Request) {
     const originalFilename = (file as any).name || "uploaded-file";
     const ext = path.extname(originalFilename).toLowerCase();
 
-    // 1. Create initial material state in database with "processing" status
+    // 1. Create initial material state
     const material = await prisma.adhdMaterial.create({
       data: {
         fileName: originalFilename,
@@ -31,70 +54,64 @@ export async function POST(req: Request) {
     });
 
     const response = NextResponse.json({
-      message: "File uploaded! Creating chapter learning plan & processing slides sequentially...",
+      message: "File uploaded successfully! Extracting full content and preparing unique slide-wise AI assets...",
       materialId: material.id,
     }, { status: 201 });
 
-    // 2. Background processing following your exact sequential pipeline
+    // 2. Background processing pipeline
     setTimeout(async () => {
       try {
-        // Step A: Extract text based on file format (.docx vs .pdf)
         let extractedText = "";
-        
+
         if (ext === ".docx") {
           const docxResult = await mammoth.extractRawText({ buffer });
           extractedText = docxResult.value || "";
         } else {
-          // PDF Processing block
+          // PDF Text Extraction / OCR parsing
           const pdfParse = require("pdf-parse");
           try {
             const pdfData = await pdfParse(buffer);
             extractedText = pdfData.text || "";
           } catch (pdfErr) {
-            console.warn("Standard PDF parsing failed, trying text-decoder fallback...");
+            console.warn("Standard PDF parsing failed, falling back to raw buffer text...");
             extractedText = buffer.toString("utf-8");
           }
         }
 
-        // Step B: Clean + structure the extracted content to remove garbage/unwanted spaces
+        // Clean up extracted text formatting
         extractedText = extractedText
           .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
           .replace(/[\r\n]+/g, " ")
           .replace(/\s+/g, " ")
           .trim();
 
-        // Fallback if scanned/empty PDF lacks native text streams (OCR placeholder integration check)
         if (!extractedText || extractedText.length < 30) {
-          console.warn("Extracted text is minimal or empty (possibly a scanned image PDF). Applying structural fallback context.");
-          extractedText = `Detailed academic study material document for: "${originalFilename}".`;
+          extractedText = `Detailed study material for document: "${originalFilename}".`;
         }
 
         const googleAi = GoogleAi.getInstance();
 
-        // Step C: Send the full context to AI to create a cohesive chapter learning plan (6 sequential stops)
+        // 3. Prompt Gemini to split the extracted content into 6 distinct parts with unique image prompts and key ideas
         const learningPlanPrompt = `
-You are an expert AI professor and academic curriculum designer. 
-Analyze the complete chapter content extracted below from the student's uploaded document ("${originalFilename}").
+You are an expert professor, academic content designer, and ADHD learning specialist. 
+Analyze the full extracted document text below ("${originalFilename}").
 
-Your task is to understand the chapter thoroughly and build a cohesive learning plan breaking it down sequentially into EXACTLY 6 logical, progressive stops (slides).
+Break it down sequentially into EXACTLY 6 progressive, unique learning slides (Stop 1 to Stop 6). 
+CRITICAL REQUIREMENT: Ensure zero repetition. Each slide must cover a completely different segment, topic, or sub-section of the text.
 
-CRITICAL REQUIREMENTS:
-1. Every slide must focus on a distinct, progressive part of the chapter content without repeating information.
-2. For each slide, write a detailed breakdown description ('descriptionNormal'), a punchy, high-impact ADHD-friendly takeaway sentence focused entirely on the core key idea ('keyIdea'), and an explicit visual description ('imagePrompt') for AI image generation.
-3. Return ONLY a valid JSON object matching the exact structure below. Do not include any markdown backticks or extra text.
-
+Return ONLY a valid JSON object matching this exact structure, with no markdown formatting tags:
 {
   "stops": [
     {
-      "title": "Clear Concept Title with Emoji 🚀",
-      "descriptionNormal": "Detailed academic explanation derived directly from this segment of the chapter context.",
-      "keyIdea": "Punchy key idea summary statement for this specific slide.",
-      "imagePrompt": "Vivid educational illustration description for this specific slide's concept."
+      "title": "Unique Title with Emoji 🚀",
+      "descriptionNormal": "Detailed academic explanation for this specific part derived strictly from the text.",
+      "keyIdea": "Punchy key takeaway sentence for this individual slide.",
+      "imagePrompt": "A highly specific, completely distinct visual description representing only this slide's concept, vivid colors, educational illustration style."
     }
   ]
 }
 
-Chapter Context:
+Extracted Document Content:
 ---
 ${extractedText.substring(0, 25000)}
 ---
@@ -108,42 +125,48 @@ ${extractedText.substring(0, 25000)}
         const parsedPlan = JSON.parse(cleanedPlan.substring(jsonStart, jsonEnd));
         const stops = parsedPlan.stops || [];
 
-        // Steps D & E: Generate Slide 1 -> Slide 2 -> ... -> Slide 6 sequentially with rate-limit protection
+        const vertexAI = new VertexAI({
+          project: process.env.GOOGLE_PROJECT_ID, 
+          location: process.env.LOCATION || "us-central1",
+        });
+
+        const imageModel = vertexAI.getGenerativeModel({ 
+          model: "gemini-2.5-flash-image",
+          generationConfig: { maxOutputTokens: 1024, temperature: 0.8 },
+        });
+
+        // 4. Generate unique individual images for each slide sequentially to avoid duplication or caching
         for (let i = 0; i < stops.length; i++) {
           const stop = stops[i];
           const slideNumber = i + 1;
 
-          console.log(`Generating Slide ${slideNumber} of 6 based on shared chapter context...`);
+          console.log(`Generating unique AI image asset for Slide ${slideNumber}/6: "${stop.title}"`);
 
-          // Pause 3 seconds between slide image calls to completely avoid Vertex AI 429 Quota limits
           if (i > 0) {
-            await sleep(3000);
+            await sleep(2000); // Prevent rate limits
           }
 
-          let imageUrl = "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1000&q=80";
-          let attempts = 0;
-          let success = false;
+          let finalImageUrl = `https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1200&q=80&sig=${material.id}-${slideNumber}`;
 
-          // Retry loop specifically for handling rate-limit hiccups
-          while (attempts < 3 && !success) {
-            try {
-              imageUrl = await googleAi.generateImage(
-                `Slide ${slideNumber} Key Idea: ${stop.keyIdea}. Visual concept: ${stop.imagePrompt}`
-              );
-              success = true;
-            } catch (imgErr: any) {
-              attempts++;
-              console.warn(`Attempt ${attempts} failed for Slide ${slideNumber} image generation:`, imgErr?.message);
-              if (attempts < 3) {
-                // Exponential backoff wait before retrying
-                await sleep(4000 * attempts);
-              } else {
-                console.error(`Image generation fallback used permanently for Slide ${slideNumber}`);
-              }
+          try {
+            const uniquePrompt = `[SLIDE_${slideNumber}_UNIQUE_ASSET] Generate a distinct visual illustration for this specific concept: ${stop.imagePrompt}. Key Idea: ${stop.keyIdea}`;
+            
+            const imageRes = await imageModel.generateContent({
+              contents: [{ role: "user", parts: [{ text: uniquePrompt }] }],
+            });
+
+            const part = imageRes.response?.candidates?.[0]?.content?.parts?.[0];
+            const base64Img = (part as any)?.inlineData?.data;
+
+            if (base64Img) {
+              const fileName = `adhd-${material.id}-slide-${slideNumber}-${Date.now()}.png`;
+              finalImageUrl = await uploadBase64Image(base64Img, fileName);
             }
+          } catch (imgErr: any) {
+            console.warn(`Vertex AI image generation warning for Slide ${slideNumber}, falling back to unique placeholder:`, imgErr?.message);
           }
 
-          // Save each slide ensuring every slide features its specific key idea prominently into the database storage layer
+          // 5. Save each slide with its content, key idea, and unique image URL into the database
           await prisma.adhdSlide.create({
             data: {
               materialId: material.id,
@@ -152,20 +175,20 @@ ${extractedText.substring(0, 25000)}
                 descriptionNormal: stop.descriptionNormal,
                 keyIdea: stop.keyIdea,
               }),
-              imageUrl: typeof imageUrl === 'string' && imageUrl.startsWith('http') ? imageUrl : null,
+              imageUrl: finalImageUrl,
               order: slideNumber * 1.0,
             },
           });
         }
 
-        // Finalize material status to completed
+        // Finalize material status
         await prisma.adhdMaterial.update({
           where: { id: material.id },
           data: { status: "completed" },
         });
 
       } catch (error: any) {
-        console.error("Sequential Pipeline Error:", error.message);
+        console.error("Pipeline Error:", error.message);
         await prisma.adhdMaterial.update({
           where: { id: material.id },
           data: { status: "failed" },

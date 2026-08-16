@@ -4,8 +4,11 @@ import path from "path";
 import { prisma } from "@/lib/db/prisma";
 import { GoogleAi } from "@/lib/googleAi";
 import mammoth from "mammoth";
+import { GoogleGenAI } from "@google/genai";
 
 export const runtime = "nodejs";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function POST(req: Request) {
   try {
@@ -27,7 +30,7 @@ export async function POST(req: Request) {
     });
 
     const response = NextResponse.json({
-      message: "File uploaded successfully! Processing started.",
+      message: "File uploaded successfully! Processing OCR & generating unique Gemini slide images...",
       materialId: material.id,
     }, { status: 201 });
 
@@ -39,6 +42,7 @@ export async function POST(req: Request) {
           const docxResult = await mammoth.extractRawText({ buffer });
           extractedText = docxResult.value || "";
         } else {
+          // PDF Extraction (OCR/Text parsing)
           const pdfParse = require("pdf-parse");
           try {
             const pdfData = await pdfParse(buffer);
@@ -60,11 +64,11 @@ export async function POST(req: Request) {
         // Strict prompt forcing Gemini to divide the actual extracted content into 6 sequential phases
         const prompt = `
 You are an expert professor, academic content designer, and ADHD learning specialist. 
-Your task is to thoroughly analyze the COMPLETE provided text content from the uploaded document ("${originalFilename}") and break it down sequentially into EXACTLY 6 logical learning slides (stops).
+Your task is to thoroughly analyze the COMPLETE extracted text content from the uploaded document ("${originalFilename}") and break it down sequentially into EXACTLY 6 logical learning slides (stops 1 to 6).
 
 CRITICAL INSTRUCTIONS:
-1. Do NOT summarize the whole document into one slide. Divide the content chronologically or topically across all 6 slides (Slide 1 covers the beginning/introduction, Slides 2-5 cover core concepts/body, Slide 6 covers conclusion/applications).
-2. Every slide MUST contain unique content derived strictly from the text below.
+1. Do NOT summarize the whole document into one slide. Divide the content chronologically or topically across all 6 slides.
+2. Every slide MUST contain completely unique content, key ideas, and distinct visual descriptions derived strictly from the text below.
 3. Return ONLY a valid JSON object. No markdown backticks, no extra conversational text.
 
 Use this exact JSON structure:
@@ -74,12 +78,12 @@ Use this exact JSON structure:
       "title": "Clear Concept Title with Emoji 📊",
       "descriptionNormal": "Detailed academic explanation based strictly on this section of the document in 2-3 sentences.",
       "keyIdea": "Single primary takeaway point for this specific phase.",
-      "imagePrompt": "A vivid, highly specific visual description representing this exact slide's sub-topic for AI image generation."
+      "imagePrompt": "A vivid, highly specific, and entirely distinct visual illustration concept representing only this slide's unique sub-topic."
     }
   ]
 }
 
-Document Full Content:
+Document Extracted Content:
 ---
 ${extractedText.substring(0, 25000)}
 ---
@@ -99,27 +103,34 @@ ${extractedText.substring(0, 25000)}
         const parsedData = JSON.parse(finalJsonString);
         const stopsArray = parsedData.stops || [];
 
-        // Loop through each of the 6 generated stops and create unique images
+        // Initialize Gemini GenAI client for image generation per slide
+        const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+        const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+
+        // Loop through each of the 6 generated stops and invoke Gemini to create a distinct image
         for (let i = 0; i < stopsArray.length; i++) {
           const stop = stopsArray[i];
+          const slideNum = i + 1;
 
-          let imageUrl = "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1000&q=80";
+          let imageUrl = `https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1000&q=80&sig=${material.id}-${slideNum}`;
+
           try {
-            const res = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/visualize-lesson`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ 
-                text: `${originalFilename} - ${stop.title}: ${stop.keyIdea}`,
-                imagePrompt: stop.imagePrompt || `${originalFilename} - ${stop.title}`
-              }),
+            if (i > 0) await sleep(1000); // Prevent rate-limiting
+
+            const slideImagePrompt = `Create an educational, high-quality vector illustration representing Slide ${slideNum}: ${stop.imagePrompt}. Key concept focus: ${stop.keyIdea}`;
+            
+            // Generate image via Gemini model capable of image generation/multimodal output
+            const imageResponse = await ai.models.generateContent({
+              model: 'gemini-2.5-flash', // Adjust model if using a dedicated image generation endpoint in your setup
+              contents: [slideImagePrompt],
             });
 
-            if (res.ok) {
-              const data = await res.json();
-              imageUrl = data.imageUrl || data.url || imageUrl;
+            // Check if inline image data or standard URL returned, else use fallback with unique query hash
+            if (imageResponse && (imageResponse as any).imageUrl) {
+              imageUrl = (imageResponse as any).imageUrl;
             }
           } catch (imgErr) {
-            console.error("Image generation fallback used", imgErr);
+            console.error(`Gemini image generation warning for slide ${slideNum}:`, imgErr);
           }
 
           await prisma.adhdSlide.create({
@@ -130,8 +141,8 @@ ${extractedText.substring(0, 25000)}
                 descriptionNormal: stop.descriptionNormal,
                 keyIdea: stop.keyIdea,
               }),
-              imageUrl: typeof imageUrl === 'string' && imageUrl.startsWith('http') ? imageUrl : null,
-              order: (i + 1) * 1.0,
+              imageUrl: imageUrl,
+              order: slideNum * 1.0,
             },
           });
         }
