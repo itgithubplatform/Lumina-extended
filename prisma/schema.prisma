@@ -20,7 +20,8 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -30,7 +31,8 @@ model Session {
   sessionToken String   @unique
   userId       String
   expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model User {
@@ -43,11 +45,16 @@ model User {
   updatedAt     DateTime        @updatedAt
   role          Role            @default(student)
   accessibility Accessibility[] @default([])
-  accounts      Account[]
-  classesTeach  Classroom[]     @relation("TeacherClasses")
-  sessions      Session[]
-  classesJoin   Classroom[]     @relation("StudentClasses")
-  studentFiles  StudentFiles[]
+
+  accounts Account[]
+  sessions Session[]
+
+  classesTeach Classroom[] @relation("TeacherClasses")
+  classesJoin  Classroom[] @relation("StudentClasses")
+
+  studentFiles StudentFiles[]
+
+  adhdMaterials AdhdMaterial[]
 }
 
 model VerificationToken {
@@ -65,79 +72,102 @@ model Classroom {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   teacherId String
-  teacher   User     @relation("TeacherClasses", fields: [teacherId], references: [id], onDelete: Cascade)
-  files     Files[]
-  students  User[]   @relation("StudentClasses")
+
+  teacher User    @relation("TeacherClasses", fields: [teacherId], references: [id], onDelete: Cascade)
+  files   Files[]
+  students User[] @relation("StudentClasses")
 
   @@unique([teacherId, name])
 }
 
 model StudentFiles {
-  id                String    @id @default(cuid())
+  id                String   @id @default(cuid())
   name              String
   link              String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
   audioLink         String?
-  status            Status    @default(processing)
+  status            Status   @default(processing)
   extractedText     String?
   blindFriendlyLink String?
   transcript        Json?
   dislexiaFriendly  Json?
-  studentId        String
-  Student          User      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId         String
+
+  Student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
 }
 
 model Files {
-  id                String    @id @default(cuid())
+  id                String   @id @default(cuid())
   name              String
   link              String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
   classId           String
   audioLink         String?
-  status            Status    @default(processing)
+  status            Status   @default(processing)
   extractedText     String?
   blindFriendlyLink String?
   transcript        Json?
   dislexiaFriendly  Json?
-  class             Classroom @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  class Classroom @relation(fields: [classId], references: [id], onDelete: Cascade)
 }
 
 model AdhdMaterial {
-  id        String      @id @default(cuid())
+  id        String   @id @default(cuid())
+  userId    String
   fileName  String
-  status    Status      @default(processing) 
-  createdAt DateTime    @default(now())
-  
-  slides    AdhdSlide[]
+  content   String   @db.Text
+  status    Status   @default(processing)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  slides AdhdSlide[]
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
 }
 
 model AdhdSlide {
-  id              String       @id @default(cuid())
-  materialId      String
-  material        AdhdMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
-  
-  imageUrl        String?     
-  textContent     String       
-  order           Float        
-  
-  isClarification Boolean      @default(false)
-  createdAt       DateTime     @default(now())
+  id         String       @id @default(cuid())
+  materialId String
+  material   AdhdMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  slideNumber String
+  title       String
+  keyIdea     String       @db.Text
+  textContent String       @db.Text
+  imageUrl    String?
+
+  isClarification Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([materialId])
+  @@unique([materialId, slideNumber])
 }
 
 enum Role {
   student
   teacher
+  admin
 }
 
 enum Accessibility {
+  // Existing variants in your database (Preserves existing data)
   dyslexia
   visualImpairment
   hearingImpairment
   cognitiveDisability
+
+  // New variants for your pipeline
+  dyslexic
+  blind
+  adhd
+  deaf
 }
 
 enum Status {

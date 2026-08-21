@@ -4,7 +4,7 @@ import path from "path";
 import { prisma } from "@/lib/db/prisma";
 import { GoogleAi } from "@/lib/googleAi";
 import mammoth from "mammoth";
-import { GoogleGenAI } from "@google/genai";
+import { VertexAI } from "@google-cloud/vertexai";
 
 export const runtime = "nodejs";
 
